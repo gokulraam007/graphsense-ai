@@ -1,8 +1,8 @@
 streamlit
 numpy
-opencv-python-headless
+opencv-python
 matplotlib
 pillow
 scipy
 paddleocr
-paddlepaddle
+paddlepaddle>=2.4.0
