@@ -193,8 +193,8 @@ if uploaded:
                 key="csv_download"
             )
             
-            # Statistics
-                    st.subheader("Data Statistics")
+    # Statistics
+    st.subheader("Data Statistics")
             stats_col1, stats_col2, stats_col3, stats_col4 = st.columns(4)
             
             with stats_col1:
