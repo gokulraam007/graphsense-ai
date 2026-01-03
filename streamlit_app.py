@@ -6,7 +6,11 @@
 import streamlit as st
 import numpy as np
 import matplotlib.pyplot as plt
-import cv2
+try:
+    import cv2
+except ImportError as e:
+    st.error(f"OpenCV (cv2) is not available: {e}")
+    cv2 = None
 import re
 from PIL import Image
 from functools import lru_cache
