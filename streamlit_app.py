@@ -1,6 +1,6 @@
 # ==========================================================
 # GraphSense-AI : Physics-aware Graph Digitizer (Streamlit)
-# FINAL CORRECTED VERSION - Production Ready
+# VERSION 3.0 - PaddleOCR API Fix + Robust Error Handling
 # ==========================================================
 
 import streamlit as st
@@ -12,6 +12,8 @@ from functools import lru_cache
 from scipy.optimize import curve_fit
 from scipy import ndimage
 from paddleocr import PaddleOCR
+import warnings
+warnings.filterwarnings('ignore')
 
 # =============================
 # CONFIG
@@ -24,13 +26,21 @@ st.title("GraphSense-AI | Physics-Aware Graph Digitizer")
 # =============================
 @lru_cache(maxsize=1)
 def get_ocr_model():
-    return PaddleOCR(use_angle_cls=True, lang="en")
+    """Initialize PaddleOCR model once and cache it"""
+    try:
+        return PaddleOCR(use_angle_cls=True, lang='en')
+    except Exception as e:
+        st.error(f"Failed to initialize OCR model: {str(e)}")
+        return None
 
 # =============================
 # OCR LABEL EXTRACTION - FIXED
 # =============================
 def extract_numeric_labels_with_positions(image_pil, axis="x"):
-    """Extract numeric labels from PIL Image using PaddleOCR"""
+    """Extract numeric labels from PIL Image using PaddleOCR
+    
+    FIXED: Removed 'cls' parameter - use ocr() method directly without cls argument
+    """
     try:
         # Convert PIL Image to numpy array
         image_array = np.array(image_pil)
@@ -46,29 +56,52 @@ def extract_numeric_labels_with_positions(image_pil, axis="x"):
             image_array = (image_array * 255).astype(np.uint8)
         
         ocr = get_ocr_model()
-        result = ocr.ocr(image_array, cls=True)
+        if ocr is None:
+            return []
+        
+        # FIXED: Call ocr() directly without 'cls' parameter
+        # The cls parameter should not be passed - it's already set during initialization
+        result = ocr.ocr(image_array)
+        
+        if result is None or len(result) == 0:
+            return []
+        
         items = []
-
+        
         for line in result:
             if line is None:
                 continue
-            for word in line:
-                text = word[1][0]
-                bbox = word[0]
-
-                match = re.search(r"-?\d+(\.\d+)?", text)
-                if not match:
+            for word_info in line:
+                try:
+                    # word_info structure: (bbox_coords, (text, confidence))
+                    bbox = word_info[0]  # Bounding box coordinates
+                    text = word_info[1][0]  # OCR text
+                    confidence = word_info[1][1]  # Confidence score
+                    
+                    # Skip low confidence detections
+                    if confidence < 0.3:
+                        continue
+                    
+                    # Extract numeric values
+                    match = re.search(r"-?\d+(\.\d+)?", text)
+                    if not match:
+                        continue
+                    
+                    # Get pixel positions from bounding box
+                    xs = [p[0] for p in bbox]
+                    ys = [p[1] for p in bbox]
+                    
+                    pixel_pos = np.mean(xs) if axis == "x" else np.mean(ys)
+                    value = float(match.group())
+                    
+                    items.append((pixel_pos, value))
+                except (IndexError, ValueError, AttributeError) as e:
                     continue
-
-                xs = [p[0] for p in bbox]
-                ys = [p[1] for p in bbox]
-
-                pixel_pos = np.mean(xs) if axis == "x" else np.mean(ys)
-                items.append((pixel_pos, float(match.group())))
-
+        
         return sorted(items, key=lambda x: x[0])
+    
     except Exception as e:
-        st.error(f"OCR processing error: {str(e)}")
+        st.error(f"OCR processing error: {type(e).__name__}: {str(e)}")
         return []
 
 # =============================
@@ -96,12 +129,12 @@ def clean_curve_mask(mask, min_area=150):
         
         cleaned = np.zeros_like(mask)
         for i in range(1, num_features + 1):
-            if sizes[i] >= min_area:
+            if i < len(sizes) and sizes[i] >= min_area:
                 cleaned[labeled == i] = 255
         
         return cleaned.astype(np.uint8)
     except Exception as e:
-        st.error(f"Mask cleaning error: {str(e)}")
+        st.warning(f"Mask cleaning warning: {str(e)}")
         return mask
 
 # =============================
@@ -120,6 +153,8 @@ def extract_curve_pixels(mask):
 def fit_axis_calibration(pixels, values):
     """Fit linear model for pixel-to-value conversion"""
     try:
+        if len(pixels) < 2:
+            return [1, 0]
         return np.polyfit(pixels, values, 1)
     except:
         return [1, 0]  # Default identity mapping
@@ -142,12 +177,16 @@ def fit_iv_curve(V, I):
         if np.sum(mask) < 2:
             return lambda v: np.zeros_like(v)
         
+        Isc_init = np.max(I[mask]) if np.max(I[mask]) > 0 else 1
+        Voc_init = np.max(V[mask]) if np.max(V[mask]) > 0 else 1
+        
         popt, _ = curve_fit(
             iv_equation,
             V[mask],
             I[mask],
-            p0=[np.max(I) if np.max(I) > 0 else 1, np.max(V) if np.max(V) > 0 else 1],
-            maxfev=10000
+            p0=[Isc_init, Voc_init],
+            maxfev=10000,
+            ftol=1e-6
         )
         
         def model(v):
@@ -206,9 +245,11 @@ if uploaded:
     mask = image_to_binary_mask(image, threshold=200)
     cleaned_mask = clean_curve_mask(mask)
 
-    # OCR AXIS TICKS - FIXED: Pass PIL image properly
+    # OCR AXIS TICKS - FIXED API CALL
     ticks_x = extract_numeric_labels_with_positions(image, axis="x")
     ticks_y = extract_numeric_labels_with_positions(image, axis="y")
+
+    st.info(f"📊 Detected labels - X-axis: {len(ticks_x)}, Y-axis: {len(ticks_y)}")
 
     if len(ticks_x) >= 2 and len(ticks_y) >= 2:
         px_x, val_x = zip(*ticks_x)
