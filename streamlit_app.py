@@ -1,4 +1,5 @@
-# ===============================================
+# ===============================================                    
+
 # GraphSense-AI v5.0: Data Point Extractor
 # Skip OCR, Focus on Accurate Data Extraction
 # Export to Excel
@@ -209,5 +210,5 @@ if uploaded:
         else:
             st.error("No data points detected! Try adjusting the settings.")
 
-    else:
+        else:
     st.info("Upload a graph image to extract data points")
