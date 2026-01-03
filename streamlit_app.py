@@ -207,7 +207,7 @@ if uploaded:
                 st.metric("Spread", f"{len(np.unique(points[:, 0]))} unique X values")
         
         else:
-            st.error("❌ No data points detected! Try adjusting the settings.")
+                st.error("No data points detected! Try adjusting the settings.")
 
 else:
-    st.info("👆 Upload a graph image to extract data points")
+        st.info("Upload a graph image to extract data points")
