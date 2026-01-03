@@ -194,21 +194,3 @@ if uploaded:
                 key="csv_download"
             )
             
-    # Statistics
-    st.subheader("Data Statistics")
-        stats_col1, stats_col2, stats_col3, stats_col4 = st.columns(4)
-        
-        with stats_col1:
-            st.metric("Total Points", len(points))
-        with stats_col2:
-            st.metric("X Range", f"{points[:, 0].min():.0f} - {points[:, 0].max():.0f}")
-        with stats_col3:
-            st.metric("Y Range", f"{points[:, 1].min():.0f} - {points[:, 1].max():.0f}")
-        with stats_col4:
-            st.metric("Spread", f"{len(np.unique(points[:, 0]))} unique X values")
-    
-        else:
-            st.error("No data points detected! Try adjusting the settings.")
-
-        else:
-    st.info("Upload a graph image to extract data points")
