@@ -6,3 +6,5 @@ pillow
 scipy
 paddleocr
 paddlepaddle>=2.4.0
+pandas
+openpyxl
