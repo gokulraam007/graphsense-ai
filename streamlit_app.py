@@ -1,8 +1,6 @@
-# ===============================================                    
-
-# GraphSense-AI v5.0: Data Point Extractor
-# Skip OCR, Focus on Accurate Data Extraction
-# Export to Excel
+# ===============================================
+# GraphSense-AI v5.1: LLM-Assisted Data Extractor
+# CV for accuracy | LLM for intelligence
 # ===============================================
 
 import streamlit as st
@@ -10,187 +8,133 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from PIL import Image
-from scipy import ndimage
+from scipy.ndimage import gaussian_filter, binary_erosion, binary_dilation
 import io
+import openai
+import os
 import warnings
-warnings.filterwarnings('ignore')
+warnings.filterwarnings("ignore")
 
 st.set_page_config(layout="wide")
-st.title("📊 GraphSense-AI v5.0 - Data Point Extractor")
-st.subheader("Extract graph data points accurately and export to Excel")
+st.title("📊 GraphSense-AI v5.1 LLM-Assisted Data Extractor")
 
 # ===============================================
-# IMAGE PROCESSING FOR CURVE DETECTION
+# USER INPUT (LLM CONTEXT)
 # ===============================================
+st.sidebar.header("🧠 Graph Context (LLM)")
+graph_type = st.sidebar.selectbox(
+    "Graph Type", 
+    ["IV Curve (Solar Cell)", "Light Transmission", "Generic X-Y Curve"]
+)
+x_unit = st.sidebar.text_input("X-axis Unit", "Voltage (V)")
+y_unit = st.sidebar.text_input("Y-axis Unit", "Current (A)")
 
+# ===============================================
+# IMAGE PROCESSING
+# ===============================================
 def detect_curve_points(image_pil, blur_strength=5, threshold=200):
-    """
-    Detect curve/line pixels in the graph using edge detection
-    and morphological operations
-    """
-    image_array = np.array(image_pil.convert('L'))
-    
-    # Apply Gaussian blur
-    from scipy.ndimage import gaussian_filter
-    blurred = gaussian_filter(image_array.astype(float), sigma=blur_strength)
-    
-    # Create binary mask - pixels darker than threshold
-    mask = (blurred < threshold).astype(np.uint8) * 255
-    
-    # Remove noise with morphological operations
-    from scipy.ndimage import binary_erosion, binary_dilation
-    mask_binary = mask > 0
-    mask_binary = binary_erosion(mask_binary, iterations=1)
-    mask_binary = binary_dilation(mask_binary, iterations=2)
-    
-    return (mask_binary * 255).astype(np.uint8)
+    gray = np.array(image_pil.convert("L"))
+    blurred = gaussian_filter(gray.astype(float), sigma=blur_strength)
+    mask = (blurred < threshold)
+    mask = binary_erosion(mask, iterations=1)
+    mask = binary_dilation(mask, iterations=2)
+    return (mask * 255).astype(np.uint8)
 
 def extract_data_points(mask):
-    """
-    Extract all data points (pixel coordinates) from the curve mask
-    Returns sorted list of (x, y) coordinates
-    """
     ys, xs = np.where(mask > 0)
     if len(xs) == 0:
         return np.array([])
-    
-    # Combine and sort by x coordinate for meaningful output
     points = np.column_stack((xs, ys))
-    points = points[np.argsort(points[:, 0])]
-    return points
+    return points[np.argsort(points[:, 0])]
 
-def get_boundary_box(image_pil):
-    """
-    Let user define the graph area boundaries to focus extraction
-    """
-    return {
-        'left': 50,
-        'right': image_pil.size[0] - 50,
-        'top': 50,
-        'bottom': image_pil.size[1] - 50
-    }
-
-def create_excel_export(points, filename="graph_data.xlsx"):
-    """
-    Create Excel file with extracted data points
-    """
-    df = pd.DataFrame(points, columns=['Pixel_X', 'Pixel_Y'])
-    
-    # Create Excel file in memory
+def create_excel_export(points):
+    df = pd.DataFrame(points, columns=["Pixel_X", "Pixel_Y"])
     buffer = io.BytesIO()
-    with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-        df.to_excel(writer, index=False, sheet_name='Data Points')
-        
-        # Format the worksheet
-        workbook = writer.book
-        worksheet = writer.sheets['Data Points']
-        worksheet.column_dimensions['A'].width = 15
-        worksheet.column_dimensions['B'].width = 15
-    
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False, sheet_name="Extracted_Data")
     buffer.seek(0)
     return buffer
 
 # ===============================================
+# LLM ANALYSIS (OPENAI)
+# ===============================================
+def llm_quality_analysis(points, graph_type):
+    if len(points) < 50:
+        return "Too few points detected."
+    
+    try:
+        api_key = st.secrets["OPENAI_API_KEY"]
+    except:
+        return "OpenAI API key not configured. Add to Streamlit secrets."
+    
+    prompt = f"""Scientific data assistant. Graph: {graph_type}. Points: {len(points)}. 
+    Assess: (1) Point density? (2) Curve smooth or noisy? (3) Risks? Answer in 2-3 sentences."""
+    
+    try:
+        client = openai.OpenAI(api_key=api_key)
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.2,
+            max_tokens=150
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        return f"LLM analysis unavailable: {str(e)}"
+
+# ===============================================
 # STREAMLIT UI
 # ===============================================
+st.write("Extract accurate data points using Computer Vision + LLM intelligence")
 
-st.write("🚧 **No OCR? No Problem!** We extract raw data points from your graph.")
-
-uploaded = st.file_uploader(
-    "📊 Upload Graph Image (PNG, JPG, JPEG)",
-    type=["png", "jpg", "jpeg"]
-)
+uploaded = st.file_uploader("Upload Graph Image", type=["png", "jpg", "jpeg"])
 
 if uploaded:
-    image = Image.open(uploaded).convert('RGB')
+    image = Image.open(uploaded).convert("RGB")
+    st.image(image, caption="Uploaded Graph", use_container_width=True)
     
-    # Display uploaded image
-    st.image(image, caption="Your Graph", use_container_width=True)
-    
-    # Settings
-    st.subheader("⚙️ Detection Settings")
+    st.subheader("Extraction Settings")
     col1, col2 = st.columns(2)
-    
     with col1:
-        blur = st.slider(
-            "Blur Strength (higher = smoother curves)",
-            min_value=1,
-            max_value=15,
-            value=5,
-            step=1
-        )
-    
+        blur = st.slider("Blur Strength", 1, 15, 5)
     with col2:
-        threshold = st.slider(
-            "Pixel Threshold (lower = detect darker lines)",
-            min_value=50,
-            max_value=250,
-            value=200,
-            step=10
-        )
+        threshold = st.slider("Detection Threshold", 50, 250, 200)
     
-    # Process button
-    if st.button("♾️ Extract Data Points"):
-        st.info("🔍 Processing image...")
+    if st.button("Extract Data Points", use_container_width=True):
+        with st.spinner("Processing..."):
+            mask = detect_curve_points(image, blur, threshold)
+            points = extract_data_points(mask)
         
-        # Detect curve mask
-        mask = detect_curve_points(image, blur_strength=blur, threshold=threshold)
-        
-        # Extract points
-        points = extract_data_points(mask)
-        
-        if len(points) > 0:
-            st.success(f"✅ Extracted **{len(points)}** data points!")
+        if len(points) == 0:
+            st.error("No curve detected")
+        else:
+            st.success(f"Extracted {len(points)} points")
             
-            # Show visualizations
-            st.subheader("📊 Visualization")
             col1, col2 = st.columns(2)
-            
             with col1:
-                st.write("**Detected Mask**")
-                fig1, ax1 = plt.subplots(figsize=(8, 6))
+                fig1, ax1 = plt.subplots()
                 ax1.imshow(mask, cmap="gray")
-                ax1.set_title("Extracted Curve Mask")
-                ax1.set_xlabel("Pixel X")
-                ax1.set_ylabel("Pixel Y")
+                ax1.set_title("Curve Mask")
                 st.pyplot(fig1)
-            
             with col2:
-                st.write("**Data Points Scatter Plot**")
-                fig2, ax2 = plt.subplots(figsize=(8, 6))
-                ax2.scatter(points[:, 0], points[:, 1], s=2, alpha=0.6, color='red')
-                ax2.set_xlabel("Pixel X")
-                ax2.set_ylabel("Pixel Y")
-                ax2.set_title("Extracted Data Points")
-                ax2.grid(True, alpha=0.3)
+                fig2, ax2 = plt.subplots()
+                ax2.scatter(points[:, 0], points[:, 1], s=2)
+                ax2.set_title("Data Points")
                 st.pyplot(fig2)
             
-            # Data preview
-            st.subheader("📋 Data Preview")
+            st.subheader("Data Preview")
             df_preview = pd.DataFrame(points[:20], columns=['Pixel_X', 'Pixel_Y'])
             st.dataframe(df_preview)
-            st.write(f"Showing first 20 of {len(points)} points")
             
-            # Export to Excel
-            st.subheader("💾 Export Data")
+            st.subheader("LLM Assessment")
+            feedback = llm_quality_analysis(points, graph_type)
+            st.info(feedback)
             
-            excel_buffer = create_excel_export(points)
-            
-            st.download_button(
-                label="💣 Download as Excel (.xlsx)",
-                data=excel_buffer,
-                file_name="graph_data.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                key="excel_download"
-            )
-            
-            # CSV export option
-            csv_data = pd.DataFrame(points, columns=['Pixel_X', 'Pixel_Y']).to_csv(index=False)
-            st.download_button(
-                label="📊 Download as CSV",
-                data=csv_data,
-                file_name="graph_data.csv",
-                mime="text/csv",
-                key="csv_download"
-            )
-            
+            st.subheader("Export")
+            col1, col2 = st.columns(2)
+            with col1:
+                excel_buffer = create_excel_export(points)
+                st.download_button("Download Excel", data=excel_buffer, file_name="graph_data.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+            with col2:
+                csv_data = pd.DataFrame(points, columns=['Pixel_X', 'Pixel_Y']).to_csv(index=False)
+                st.download_button("Download CSV", data=csv_data, file_name="graph_data.csv", mime="text/csv", use_container_width=True)
